@@ -199,7 +199,17 @@ def create_gradio_ui(predictor) -> gr.Blocks:
     # Default to /tmp so Render Free can write (no persistent disk, but /tmp is writable).
     feedback_dir = Path(getattr(settings, "feedback_dir", "/tmp/fabric_mvp_feedback"))
 
-    with gr.Blocks(title="오소리 섬유 분류 로봇", css=css, theme=gr.themes.Soft(primary_hue="amber")) as demo:
+    head = """
+    <meta property="og:title" content="오소리 섬유 분류 로봇" />
+    <meta property="og:image" content="/favicon.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="오소리 섬유 분류 로봇" />
+    <meta name="twitter:image" content="/favicon.png" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" href="/favicon.png" />
+    """
+
+    with gr.Blocks(title="오소리 섬유 분류 로봇", css=css, theme=gr.themes.Soft(primary_hue="amber"), head=head) as demo:
         infer_state = gr.State(value=None)
 
         with gr.Column(elem_classes=["app-shell"]):

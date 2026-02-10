@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 
 import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, RedirectResponse
+from starlette.responses import Response
 
 from fabric_mvp.config import settings
 from fabric_mvp.util.memory import get_rss_mb
@@ -102,6 +104,80 @@ def create_app(predictor=None) -> FastAPI:
                 if any(path == p or path.startswith(p + "/") for p in GRADIO_COMPAT_PREFIXES):
                     request.scope["path"] = ui_path + path
                 return await call_next(request)
+
+            def _public_base_url(request) -> str:
+                # Prefer forwarded headers so OG tags are correct behind Railway/Render proxies.
+                hdrs = request.headers
+                proto = hdrs.get("x-forwarded-proto") or request.url.scheme
+                host = hdrs.get("x-forwarded-host") or hdrs.get("host") or request.url.netloc
+                return f"{proto}://{host}".rstrip("/")
+
+            # Some Gradio versions render empty OG image tags in server HTML (content=""),
+            # which causes social scrapers to pick the empty one even if our custom head adds a valid tag.
+            # Patch the `/ui/` HTML response to ensure OG meta is correct server-side.
+            OG_TITLE = "오소리 섬유 분류 로봇"
+            OG_DESC = "울/캐시미어 현미경 이미지 분류 및 세그멘테이션 기반 근거 표시"
+
+            @app.middleware("http")
+            async def _patch_ui_html_head(request, call_next):  # noqa: ANN001
+                if request.method != "GET":
+                    return await call_next(request)
+                path = request.scope.get("path") or ""
+                if path not in {ui_path, ui_path + "/"}:
+                    return await call_next(request)
+
+                resp = await call_next(request)
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if not ctype.startswith("text/html"):
+                    return resp
+
+                body = b"".join([chunk async for chunk in resp.body_iterator])
+                text = body.decode("utf-8", errors="ignore")
+
+                base = _public_base_url(request)
+                og_image = f"{base}/favicon.png"
+                icon_ico = f"{base}/favicon.ico"
+                icon_png = f"{base}/favicon.png"
+
+                # Remove Gradio defaults/empties so scrapers don't pick the wrong one.
+                text = re.sub(r'<meta[^>]+property="og:title"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+property="og:image"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+property="og:description"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+property="og:type"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+name="twitter:title"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+name="twitter:image"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+name="twitter:description"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<meta[^>]+name="twitter:card"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<link[^>]+rel="icon"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+                text = re.sub(r'<link[^>]+rel="apple-touch-icon"[^>]*?/?>', "", text, flags=re.IGNORECASE)
+
+                injected = (
+                    f'<meta property="og:title" content="{OG_TITLE}" />\n'
+                    f'<meta property="og:description" content="{OG_DESC}" />\n'
+                    f'<meta property="og:type" content="website" />\n'
+                    f'<meta property="og:image" content="{og_image}" />\n'
+                    f'<meta name="twitter:card" content="summary_large_image" />\n'
+                    f'<meta name="twitter:title" content="{OG_TITLE}" />\n'
+                    f'<meta name="twitter:description" content="{OG_DESC}" />\n'
+                    f'<meta name="twitter:image" content="{og_image}" />\n'
+                    f'<link rel="icon" href="{icon_ico}" />\n'
+                    f'<link rel="apple-touch-icon" href="{icon_png}" />\n'
+                )
+
+                if "</head>" in text:
+                    text = text.replace("</head>", injected + "</head>")
+                else:
+                    text = injected + text
+
+                headers = dict(resp.headers)
+                headers.pop("content-length", None)
+                return Response(
+                    content=text.encode("utf-8"),
+                    status_code=resp.status_code,
+                    headers=headers,
+                    media_type="text/html",
+                    background=resp.background,
+                )
         except Exception as exc:
             logger.warning("Gradio UI mount skipped: %s", exc)
 
