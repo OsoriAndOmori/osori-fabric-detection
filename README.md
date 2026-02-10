@@ -1,0 +1,1 @@
+# osori-fabric-detection
