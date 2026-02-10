@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import threading
 
 import cv2
 import numpy as np
@@ -44,6 +45,11 @@ def _topk_from_scores(labels: list[str], scores: np.ndarray, k: int = 3) -> list
 class HybridPredictor:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
+        self._sem: threading.BoundedSemaphore | None = None
+        n = int(getattr(settings, "max_concurrent_inferences", 1))
+        if n > 0:
+            self._sem = threading.BoundedSemaphore(value=n)
+
         self.classes = self._load_classes(settings.labels_path)
         self.fiber_classes = self.classes[1:]
 
@@ -224,72 +230,80 @@ class HybridPredictor:
         return cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB), class_masks_rgb
 
     def predict(self, image_bgr: np.ndarray, *, include_visuals: bool = False) -> PredictionResult:
-        # Cap input size early to avoid OOM on small-memory hosts (Render Free).
-        h, w = image_bgr.shape[:2]
-        max_side = int(getattr(self.settings, "max_input_side", 1600))
-        if max_side > 0 and max(h, w) > max_side:
-            scale = float(max_side) / float(max(h, w))
-            new_w = max(1, int(w * scale))
-            new_h = max(1, int(h * scale))
-            image_bgr = cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        acquired = False
+        if self._sem is not None:
+            self._sem.acquire()
+            acquired = True
+        try:
+            # Cap input size early to avoid OOM on small-memory hosts (Render Free).
+            h, w = image_bgr.shape[:2]
+            max_side = int(getattr(self.settings, "max_input_side", 1600))
+            if max_side > 0 and max(h, w) > max_side:
+                scale = float(max_side) / float(max(h, w))
+                new_w = max(1, int(w * scale))
+                new_h = max(1, int(h * scale))
+                image_bgr = cv2.resize(image_bgr, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-        qa = run_quality_checks(image_bgr, self.qa_config)
+            qa = run_quality_checks(image_bgr, self.qa_config)
 
-        if not self.has_any_model:
-            top3 = [{"label": lbl, "prob": round(1 / max(1, len(self.fiber_classes)), 4)} for lbl in self.fiber_classes[:3]]
-            blend = {lbl: round(100.0 / max(1, len(self.fiber_classes)), 2) for lbl in self.fiber_classes}
-            return PredictionResult(qa=qa, top3=top3, blend_percent=blend, model_version=f"{__version__}-no-model")
+            if not self.has_any_model:
+                top3 = [{"label": lbl, "prob": round(1 / max(1, len(self.fiber_classes)), 4)} for lbl in self.fiber_classes[:3]]
+                blend = {lbl: round(100.0 / max(1, len(self.fiber_classes)), 2) for lbl in self.fiber_classes}
+                return PredictionResult(qa=qa, top3=top3, blend_percent=blend, model_version=f"{__version__}-no-model")
 
-        pred_mask = self._predict_segmentation(image_bgr)
-        if pred_mask is not None:
-            blend = self._segmentation_blend(pred_mask)
-            scores = np.array([blend.get(lbl, 0.0) / 100.0 for lbl in self.fiber_classes], dtype=np.float32)
-            top3 = _topk_from_scores(self.fiber_classes, scores, k=min(3, len(self.fiber_classes)))
+            pred_mask = self._predict_segmentation(image_bgr)
+            if pred_mask is not None:
+                blend = self._segmentation_blend(pred_mask)
+                scores = np.array([blend.get(lbl, 0.0) / 100.0 for lbl in self.fiber_classes], dtype=np.float32)
+                top3 = _topk_from_scores(self.fiber_classes, scores, k=min(3, len(self.fiber_classes)))
 
-            sorted_labels = sorted(blend.items(), key=lambda kv: kv[1], reverse=True)
-            mixed_classes = [k for k, v in sorted_labels if v >= 15.0]
+                sorted_labels = sorted(blend.items(), key=lambda kv: kv[1], reverse=True)
+                mixed_classes = [k for k, v in sorted_labels if v >= 15.0]
 
+                evidence = {
+                    "mode": "segmentation",
+                    "class_pixel_ratio": blend,
+                    "mixed_detected": len(mixed_classes) >= 2,
+                    "mixed_classes": mixed_classes,
+                }
+
+                overlay_rgb = None
+                class_masks_rgb = None
+                if include_visuals:
+                    overlay_rgb, class_masks_rgb = self._segmentation_visuals(image_bgr, pred_mask)
+
+                return PredictionResult(
+                    qa=qa,
+                    top3=top3,
+                    blend_percent=blend,
+                    model_version=__version__,
+                    evidence=evidence,
+                    overlay_rgb=overlay_rgb,
+                    class_masks_rgb=class_masks_rgb,
+                )
+
+            probs = self._predict_classification(image_bgr)
+            if probs is None:
+                top3 = [{"label": lbl, "prob": 0.0} for lbl in self.fiber_classes[:3]]
+                return PredictionResult(qa=qa, top3=top3, blend_percent={}, model_version=__version__)
+
+            top3 = _topk_from_scores(self.fiber_classes, probs, k=min(3, len(self.fiber_classes)))
+
+            blend = {}
+            norm = float(np.sum(probs)) + 1e-8
+            for idx, label in enumerate(self.fiber_classes):
+                pct = float(probs[idx] / norm * 100.0)
+                blend[label] = round(pct, 2)
+
+            mixed_classes = [k for k, v in blend.items() if v >= 15.0]
             evidence = {
-                "mode": "segmentation",
+                "mode": "classification",
                 "class_pixel_ratio": blend,
                 "mixed_detected": len(mixed_classes) >= 2,
                 "mixed_classes": mixed_classes,
             }
 
-            overlay_rgb = None
-            class_masks_rgb = None
-            if include_visuals:
-                overlay_rgb, class_masks_rgb = self._segmentation_visuals(image_bgr, pred_mask)
-
-            return PredictionResult(
-                qa=qa,
-                top3=top3,
-                blend_percent=blend,
-                model_version=__version__,
-                evidence=evidence,
-                overlay_rgb=overlay_rgb,
-                class_masks_rgb=class_masks_rgb,
-            )
-
-        probs = self._predict_classification(image_bgr)
-        if probs is None:
-            top3 = [{"label": lbl, "prob": 0.0} for lbl in self.fiber_classes[:3]]
-            return PredictionResult(qa=qa, top3=top3, blend_percent={}, model_version=__version__)
-
-        top3 = _topk_from_scores(self.fiber_classes, probs, k=min(3, len(self.fiber_classes)))
-
-        blend = {}
-        norm = float(np.sum(probs)) + 1e-8
-        for idx, label in enumerate(self.fiber_classes):
-            pct = float(probs[idx] / norm * 100.0)
-            blend[label] = round(pct, 2)
-
-        mixed_classes = [k for k, v in blend.items() if v >= 15.0]
-        evidence = {
-            "mode": "classification",
-            "class_pixel_ratio": blend,
-            "mixed_detected": len(mixed_classes) >= 2,
-            "mixed_classes": mixed_classes,
-        }
-
-        return PredictionResult(qa=qa, top3=top3, blend_percent=blend, model_version=__version__, evidence=evidence)
+            return PredictionResult(qa=qa, top3=top3, blend_percent=blend, model_version=__version__, evidence=evidence)
+        finally:
+            if acquired and self._sem is not None:
+                self._sem.release()

@@ -62,8 +62,11 @@ def create_app(predictor=None) -> FastAPI:
         except Exception as e:
             raise HTTPException(status_code=503, detail=f"predictor unavailable: {e}") from e
 
-        if rss_before is not None and rss_after is not None:
-            logger.info("predict rss_mb before=%.2f after=%.2f delta=%.2f", rss_before, rss_after, rss_after - rss_before)
+        if getattr(settings, "log_rss", True) and rss_before is not None and rss_after is not None:
+            msg = f"predict rss_mb before={rss_before:.2f} after={rss_after:.2f} delta={rss_after - rss_before:.2f}"
+            # Render logs always capture stdout; logging config can vary.
+            print(msg, flush=True)
+            logger.info(msg)
 
         return {
             "qa": pred.qa,

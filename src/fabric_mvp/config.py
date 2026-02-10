@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     backend: str = "auto"  # auto|onnx|torch
     max_input_side: int = 1600  # resize long side before inference to reduce OOM risk (Render free)
     max_display_side: int = 1024  # cap images returned to UI (overlay/masks) to reduce RAM/bandwidth
+    log_rss: bool = True  # print rss before/after inference to stdout for debugging on Render
+    max_concurrent_inferences: int = 1  # 1 = serialize inference (recommended). 0 = unlimited.
     min_width: int = 256
     min_height: int = 256
     blur_threshold: float = 80.0

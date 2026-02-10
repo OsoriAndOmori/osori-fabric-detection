@@ -224,8 +224,10 @@ def create_gradio_ui(predictor) -> gr.Blocks:
                 rss_before = get_rss_mb()
                 pred = predictor.predict(image_bgr, include_visuals=bool(show_ev))
                 rss_after = get_rss_mb()
-                if rss_before is not None and rss_after is not None:
-                    logger.info("ui infer rss_mb before=%.2f after=%.2f delta=%.2f", rss_before, rss_after, rss_after - rss_before)
+                if getattr(settings, "log_rss", True) and rss_before is not None and rss_after is not None:
+                    msg = f"ui infer rss_mb before={rss_before:.2f} after={rss_after:.2f} delta={rss_after - rss_before:.2f}"
+                    print(msg, flush=True)
+                    logger.info(msg)
 
                 retake = pred.qa.get("retake", False)
                 klass = "retake-yes" if retake else "retake-no"

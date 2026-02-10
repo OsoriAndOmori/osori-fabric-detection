@@ -291,6 +291,7 @@ scripts/train_build_push_ghcr.sh \
 | `FABRIC_CLASSIFICATION_ONNX_PATH` | `exports/classification.onnx` | Classification(ONNX) 모델 경로 | ONNX 위치 변경 시 |
 | `FABRIC_MAX_INPUT_SIDE` | `1600` | 입력/ROI long-side가 이 값 초과 시 축소 후 추론(메모리 안정화) | Render Free 권장 `1200` |
 | `FABRIC_MAX_DISPLAY_SIDE` | `1024` | UI로 반환하는 프리뷰/오버레이/마스크 long-side 캡(메모리/대역폭 절감) | Render Free 권장 `768` |
+| `FABRIC_MAX_CONCURRENT_INFERENCES` | `1` | 동시 추론 제한(메모리 안정화). `1`이면 serialize, `0`이면 제한 없음 | 멀티유저 운영 시 `1` 권장 |
 | `FABRIC_MIN_WIDTH` | `256` | QA 최소 너비 | 현미경 이미지가 작으면 조정 |
 | `FABRIC_MIN_HEIGHT` | `256` | QA 최소 높이 | 현미경 이미지가 작으면 조정 |
 | `FABRIC_BLUR_THRESHOLD` | `80.0` | QA blur 기준(Laplacian variance) | 카메라/배율 바뀌면 튜닝 |
