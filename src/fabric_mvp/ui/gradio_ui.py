@@ -176,6 +176,24 @@ def create_gradio_ui(predictor) -> gr.Blocks:
     }
     /* Keep actual editor above watermark layer */
     #roi_editor > * { position: relative; z-index: 2; }
+
+    .footer {
+      margin-top: 14px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(216, 209, 195, 0.75);
+      color: #6b6256;
+      font-size: 13px;
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .footer a {
+      color: #6b4d2a;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .footer a:hover { text-decoration: underline; }
     """
 
     # Default to /tmp so Render Free can write (no persistent disk, but /tmp is writable).
@@ -241,6 +259,13 @@ def create_gradio_ui(predictor) -> gr.Blocks:
             feedback_note = gr.Textbox(label="메모(선택)", lines=2)
             feedback_btn = gr.Button("피드백 저장", variant="secondary")
             feedback_status = gr.Markdown("아직 피드백이 저장되지 않았습니다.")
+
+            gr.HTML(
+                '<div class="footer">'
+                '<div>Build: <code>fabric-mvp</code></div>'
+                '<div><a href="https://github.com/OsoriAndOmori/osori-fabric-detection" target="_blank" rel="noopener noreferrer">GitHub: OsoriAndOmori/osori-fabric-detection</a></div>'
+                "</div>"
+            )
 
             def infer(editor_value: Any, show_ev: bool):
                 empty_overlay = np.zeros((256, 256, 3), dtype=np.uint8)
