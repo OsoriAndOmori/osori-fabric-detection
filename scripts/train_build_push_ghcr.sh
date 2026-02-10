@@ -198,11 +198,17 @@ docker run --rm \
 
 # 5) Build and push runtime image
 # This build uses .dockerignore to avoid copying datasets/train|val.
+EXTRA_TAGS=()
+if [[ "$TAG" != "latest" ]]; then
+  EXTRA_TAGS+=("-t" "$IMAGE:latest")
+fi
+
 if [[ "$DO_PUSH" == "true" ]]; then
   docker buildx build \
     --platform "$PLATFORM" \
     -t "$IMAGE:$TAG" \
     -t "$IMAGE:sha-$(git rev-parse --short HEAD)" \
+    "${EXTRA_TAGS[@]}" \
     --push \
     .
   echo "==> Pushed: $IMAGE:$TAG"
@@ -210,6 +216,7 @@ else
   docker buildx build \
     --platform "$PLATFORM" \
     -t "$IMAGE:$TAG" \
+    "${EXTRA_TAGS[@]}" \
     --load \
     .
   echo "==> Built locally (loaded): $IMAGE:$TAG"

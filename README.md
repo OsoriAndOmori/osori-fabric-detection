@@ -263,6 +263,8 @@ scripts/train_build_push_ghcr.sh \
   --push
 ```
 
+NOTE: `--tag latest`가 아니어도 스크립트는 항상 `:latest` 태그도 함께 갱신합니다.
+
 ## 5) QA 기준
 
 - Blur: Laplacian variance (`blur_threshold` 기본 80.0)
